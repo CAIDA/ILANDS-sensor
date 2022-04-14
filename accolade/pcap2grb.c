@@ -37,7 +37,7 @@ struct px3_state
     unsigned int anonymize;
     unsigned int records_per_file;
     unsigned int rec;
-    uint64_t total_packets;
+    uint64_t total_packets, total_skipped, total_tagged, total_v6;
     char *out_prefix;
     char f_name[1024];
 };
@@ -251,6 +251,7 @@ int main(int argc, char *argv[])
     GxB_Desc_set(desc, GxB_COMPRESSION, GxB_COMPRESSION_LZ4);
 
     TIC(CLOCK_REALTIME, "pcap begin");
+
     while ((ret = pcap_next_ex(pcap, &hdr_p, &buf_p)) >= 0)
     {
         pstate->total_packets++;
@@ -291,6 +292,57 @@ int main(int argc, char *argv[])
 
                 pstate->rec++;
             }
+            else
+                pstate->total_skipped++;
+        }
+        else if (ntohs(eth_hdr->ether_type) == ETH_P_8021Q) // quick and dirty, can refactor to avoid duplication
+        {
+            pstate->total_tagged++;
+
+            if (ntohs(*(uint16_t *)(buf_p + 16)) == ETHERTYPE_IP)
+            {
+                const struct ip *ip_hdr = (struct ip *)(buf_p + 18);
+
+                if (ip_hdr->ip_v == IPVERSION)
+                {
+                    uint32_t srcip, dstip;
+
+                    if (subblock == 0 && pstate->rec == 0)
+                    {
+                        pstate->f_tm = localtime(&hdr_p->ts.tv_sec);
+                    }
+
+                    if (pstate->anonymize != 0)
+                    {
+                        srcip = scramble_ip4(ip_hdr->ip_src.s_addr, 16);
+                        dstip = scramble_ip4(ip_hdr->ip_dst.s_addr, 16);
+                    }
+                    else
+                    {
+                        srcip = ip_hdr->ip_src.s_addr;
+                        dstip = ip_hdr->ip_dst.s_addr;
+                    }
+
+                    if (srcip > UINT_MAX - 1 || dstip > UINT_MAX - 1)
+                    {
+                        continue;
+                    }
+
+                    R[pstate->rec] = srcip;
+                    C[pstate->rec] = dstip;
+                    V[pstate->rec] = 1;
+
+                    pstate->rec++;
+                }
+                else
+                    pstate->total_skipped++;
+            }
+            else
+                pstate->total_skipped++;
+        }
+        else if (ntohs(eth_hdr->ether_type) == ETH_P_IPV6)
+        {
+            pstate->total_v6++;
         }
 
         if (pstate->rec == SUBWINSIZE)
@@ -393,7 +445,7 @@ int main(int argc, char *argv[])
     }
 
     filepos = ftell(in);
-    fprintf(stderr, "Done: %ld packets.  Filepos: %ld/%ld (%.2f pps)\n", pstate->total_packets, filepos, filesize, pstate->total_packets / t_elapsed);
+    fprintf(stderr, "Done: %ld packets.  (tagged: %ld, v6: %ld, skipped: %ld) Filepos: %ld/%ld (%.2f pps)\n", pstate->total_packets, pstate->total_tagged, pstate->total_v6, pstate->total_skipped, filepos, filesize, pstate->total_packets / t_elapsed);
     fclose(in);
     exit(0);
 }
