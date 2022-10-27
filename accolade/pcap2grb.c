@@ -275,7 +275,7 @@ int main(int argc, char *argv[])
     int subblock = 0;
 
     GrB_Descriptor_new(&desc);
-    GxB_Desc_set(desc, GxB_COMPRESSION, GxB_COMPRESSION_LZ4);
+    GxB_Desc_set(desc, GxB_COMPRESSION, GxB_COMPRESSION_ZSTD + 1);
 
     TIC(CLOCK_REALTIME, "pcap begin");
 
@@ -287,7 +287,7 @@ int main(int argc, char *argv[])
         if (hdr_p->len != hdr_p->caplen)
             fprintf(stderr, "WARNING: Capture size different than packet size: %u bytes.\n", hdr_p->len);
 
-        const struct ip *ip_hdr = find_iphdr(buf_p);
+        const struct ip *ip_hdr = (struct ip *) find_iphdr(buf_p);
 
         if (ip_hdr == NULL) // Not ETHERTYPE_IP.
         {
@@ -305,8 +305,8 @@ int main(int argc, char *argv[])
 
             if (pstate->anonymize != 0)
             {
-                srcip = scramble_ip4(BSWAP(ip_hdr->ip_src.s_addr), 16);
-                dstip = scramble_ip4(BSWAP(ip_hdr->ip_dst.s_addr), 16);
+                srcip = BSWAP(scramble_ip4(ip_hdr->ip_src.s_addr, 16));
+                dstip = BSWAP(scramble_ip4(ip_hdr->ip_dst.s_addr, 16));
             }
             else
             {
