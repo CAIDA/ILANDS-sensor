@@ -38,6 +38,7 @@ struct px3_state
     struct tm *f_tm;
     unsigned int anonymize;
     unsigned int swapped;
+    unsigned int verbose;
     unsigned int records_per_file;
     unsigned int rec;
     uint64_t total_packets, total_invalid, total_tagged, total_v6;
@@ -131,7 +132,7 @@ static inline void timespec_diff(struct timespec *a, struct timespec *b, struct 
 
 void usage(const char *name)
 {
-    printf("usage: %s [-a anonymize.key] -i INPUT_FILE -o OUTPUT_DIRECTORY\n", name);
+    printf("usage: %s [-vS] [-a anonymize.key] -i INPUT_FILE -o OUTPUT_DIRECTORY\n", name);
 }
 
 const uint8_t *find_iphdr(const uint8_t *base)
@@ -174,7 +175,7 @@ int main(int argc, char *argv[])
     pstate->f_tm = NULL;
     pstate->records_per_file = WINDOWSIZE;
 
-    while ((c = getopt(argc, argv, "Sa:i:o:")) != -1)
+    while ((c = getopt(argc, argv, "Sva:i:o:")) != -1)
     {
         switch (c)
         {
@@ -192,6 +193,9 @@ int main(int argc, char *argv[])
         case 'S':
             pstate->swapped = 1;
             break;
+	case 'v':
+	    pstate->verbose = 1;
+	    break;
         case 'o':
             // output dir
             value = optarg;
@@ -284,7 +288,7 @@ int main(int argc, char *argv[])
         pstate->total_packets++;
         const struct ether_header *eth_hdr = (struct ether_header *)buf_p;
 
-        if (hdr_p->len != hdr_p->caplen)
+        if (pstate->verbose && hdr_p->len != hdr_p->caplen)
             fprintf(stderr, "WARNING: Capture size different than packet size: %u bytes.\n", hdr_p->len);
 
         const struct ip *ip_hdr = (struct ip *) find_iphdr(buf_p);
