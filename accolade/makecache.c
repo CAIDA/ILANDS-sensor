@@ -73,9 +73,9 @@ int main(int argc, char **argv)
     scramble_crypt_t key_crypto = SCRAMBLE_BLOWFISH;
     const char *keyfile = "anonkey";
 
-    if (argc < 1)
+    if (argc < 2)
     {
-        fprintf(stderr, "usage: %s <cache file>\n", argv[0]);
+        fprintf(stderr, "usage: %s <cache file name>\n", argv[0]);
         return 1;
     }
     else
