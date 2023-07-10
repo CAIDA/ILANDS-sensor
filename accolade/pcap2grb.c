@@ -263,7 +263,7 @@ int main(int argc, char *argv[])
             perror("fread");
             return 1;
         }
-        
+
         fclose(fp);
         TOC(CLOCK_MONOTONIC, "loading ip4cache");
     }
@@ -462,7 +462,9 @@ int main(int argc, char *argv[])
             subblock = 0;
         }
     }
-    free(R); free(C); free(V);
+    free(R);
+    free(C);
+    free(V);
     TOC(CLOCK_MONOTONIC, "pcap process");
 
     if (ret == -1) // 0 = packet retrieved, -1 = read error, -2 = successful EOF
