@@ -1,5 +1,5 @@
 ACCOLADE_ROOT = /opt/accolade
-GRAPHBLAS_ROOT = /usr/local
+GRAPHBLAS_ROOT = /state/partition1/llgrid/pkg/graphblas/GraphBLAS-API-2.0.0/SuiteSparseGraphBLAS-7.2.0/C
 DEBUG = n
 
 CC = gcc
@@ -13,7 +13,7 @@ GRAPHBLAS_LIBS = -L$(GRAPHBLAS_ROOT)/lib -lgraphblas -lgomp -pthread -Wl,-rpath,
 ifeq ($(DEBUG),y)
 CFLAGS += -O0 -g
 else
-CFLAGS += -O3 -DNDEBUG
+CFLAGS += -O3
 endif
 
 ALL_FILES  = gbdeserialize makecache pcap2grb anic2grb

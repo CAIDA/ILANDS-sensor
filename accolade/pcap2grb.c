@@ -243,6 +243,7 @@ int main(int argc, char *argv[])
         struct timespec ts_start;
         const size_t cachesize = sizeof(uint32_t) * (UINT_MAX - 1);
 
+        TIC(CLOCK_MONOTONIC, "loading ip4cache");
         fprintf(stderr, "loading anonymization table: %s\n", cachefile);
         pstate->ip4cache = malloc(cachesize);
 
@@ -262,8 +263,9 @@ int main(int argc, char *argv[])
             perror("fread");
             return 1;
         }
-
+        
         fclose(fp);
+        TOC(CLOCK_MONOTONIC, "loading ip4cache");
     }
     else if (pstate->anonymize != 0)
     {
@@ -317,8 +319,7 @@ int main(int argc, char *argv[])
     GrB_Descriptor_new(&desc);
     GxB_Desc_set(desc, GxB_COMPRESSION, GxB_COMPRESSION_ZSTD + 1);
 
-    TIC(CLOCK_REALTIME, "pcap begin");
-
+    TIC(CLOCK_MONOTONIC, "pcap process");
     while ((ret = pcap_next_ex(pcap, &hdr_p, &buf_p)) >= 0)
     {
         pstate->total_packets++;
@@ -461,10 +462,8 @@ int main(int argc, char *argv[])
             subblock = 0;
         }
     }
-    free(R);
-    free(C);
-    free(V);
-    TOC(CLOCK_REALTIME, "pcap process");
+    free(R); free(C); free(V);
+    TOC(CLOCK_MONOTONIC, "pcap process");
 
     if (ret == -1) // 0 = packet retrieved, -1 = read error, -2 = successful EOF
     {
