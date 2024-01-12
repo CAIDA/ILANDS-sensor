@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <getopt.h>
 #include <pcap/pcap.h>
 #include <pthread.h>
@@ -21,14 +22,8 @@
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 
-/* see README */
 #include "cryptopANT.h"
 
-/* hardcoded paths for testing */
-#define ANONKEYFILE "anon.key"
-#define CACHE_PATH  "/data/ipcache_file2"
-
-/* helper function borrowed from LAGraph */
 #define LAGRAPH_TRY_EXIT(method)                                                                   \
     {                                                                                              \
         GrB_Info info = (method);                                                                  \
@@ -76,7 +71,17 @@ int main(int argc, char **argv)
     FILE *fp;
 
     scramble_crypt_t key_crypto = SCRAMBLE_BLOWFISH;
-    const char *keyfile = ANONKEYFILE;
+    const char *keyfile = "anonkey";
+
+    if (argc < 2)
+    {
+        fprintf(stderr, "usage: %s <cache file name>\n", argv[0]);
+        return 1;
+    }
+    else
+    {
+        fprintf(stderr, "cache file: %s\n", argv[1]);
+    }
 
     fprintf(stderr, "scramble keyfile: %s\n", keyfile);
     if (scramble_init_from_file(keyfile, key_crypto, key_crypto, NULL) < 0)
@@ -97,11 +102,11 @@ int main(int argc, char **argv)
         { // this takes a while, provide some periodic status output
             fprintf(stderr, "Generating, i=%u\n", i);
         }
-        ipc[i] = scramble_ip4(i, 16); // preserve 16 upper bits
+        ipc[i] = scramble_ip4(i, 16);
     }
-    TOC(CLOCK_REALTIME, "random IP cache creation");
-    
-    if ((fp = fopen(CACHE_PATH, "w")) == NULL)
+    TOC(CLOCK_REALTIME, "IP cache creation");
+
+    if ((fp = fopen(argv[1], "w")) == NULL)
     {
         perror("fopen");
         exit(0);

@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +32,7 @@
 #define WINDOWSIZE (1 << 23)
 #define SUBWINSIZE (1 << 17)
 
-#define BSWAP(a)    (pstate->swapped ? ntohl(a) : (a))
+#define BSWAP(a) (pstate->swapped ? ntohl(a) : (a))
 
 struct px3_state
 {
@@ -39,8 +40,10 @@ struct px3_state
     unsigned int anonymize;
     unsigned int swapped;
     unsigned int verbose;
+    unsigned int cache;
     unsigned int records_per_file;
     unsigned int rec;
+    uint32_t *ip4cache;
     uint64_t total_packets, total_invalid, total_tagged, total_v6;
     char *out_prefix;
     char f_name[1024];
@@ -132,7 +135,7 @@ static inline void timespec_diff(struct timespec *a, struct timespec *b, struct 
 
 void usage(const char *name)
 {
-    printf("usage: %s [-vS] [-a anonymize.key] -i INPUT_FILE -o OUTPUT_DIRECTORY\n", name);
+    printf("usage: %s [-vS] [-a anonymize.key] [-c cachefile] -i INPUT_FILE -o OUTPUT_DIRECTORY\n", name);
 }
 
 const uint8_t *find_iphdr(const uint8_t *base)
@@ -159,7 +162,7 @@ const uint8_t *find_iphdr(const uint8_t *base)
 int main(int argc, char *argv[])
 {
     FILE *in;
-    char in_f[PATH_MAX], anonkey[PATH_MAX];
+    char in_f[PATH_MAX], anonkey[PATH_MAX], cachefile[PATH_MAX];
     pcap_t *pcap;
     char errbuf[PCAP_ERRBUF_SIZE];
     char *value = NULL;      // for getopt
@@ -175,7 +178,7 @@ int main(int argc, char *argv[])
     pstate->f_tm = NULL;
     pstate->records_per_file = WINDOWSIZE;
 
-    while ((c = getopt(argc, argv, "Sva:i:o:")) != -1)
+    while ((c = getopt(argc, argv, "Sva:i:o:c:")) != -1)
     {
         switch (c)
         {
@@ -193,9 +196,13 @@ int main(int argc, char *argv[])
         case 'S':
             pstate->swapped = 1;
             break;
-	case 'v':
-	    pstate->verbose = 1;
-	    break;
+        case 'v':
+            pstate->verbose = 1;
+            break;
+        case 'c':
+            pstate->cache = 1;
+            snprintf(cachefile, sizeof(cachefile) - 1, "%s", optarg);
+            break;
         case 'o':
             // output dir
             value = optarg;
@@ -229,7 +236,36 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    if (pstate->anonymize != 0)
+    if (pstate->cache == 1)
+    {
+        FILE *fp;
+        size_t filesize = 0, ret = 0;
+        struct timespec ts_start;
+        const size_t cachesize = sizeof(uint32_t) * (UINT_MAX - 1);
+
+        fprintf(stderr, "loading anonymization table: %s\n", cachefile);
+        pstate->ip4cache = malloc(cachesize);
+
+        if ((fp = fopen(cachefile, "rb")) == NULL)
+        {
+            perror("fopen");
+            return 1;
+        }
+
+        fseek(fp, 0L, SEEK_END);
+        filesize = ftell(fp);
+        fseek(fp, 0L, SEEK_SET);
+        fprintf(stderr, "anonymization table is %ld bytes\n", filesize);
+
+        if ((ret = fread(pstate->ip4cache, filesize, 1, fp)) < 1)
+        {
+            perror("fread");
+            return 1;
+        }
+
+        fclose(fp);
+    }
+    else if (pstate->anonymize != 0)
     {
         fprintf(stderr, "anonymizing using scramble keyfile: %s\n", anonkey);
         if (scramble_init_from_file(anonkey, SCRAMBLE_BLOWFISH, SCRAMBLE_BLOWFISH, NULL) < 0)
@@ -291,7 +327,7 @@ int main(int argc, char *argv[])
         if (pstate->verbose && hdr_p->len != hdr_p->caplen)
             fprintf(stderr, "WARNING: Capture size different than packet size: %u bytes.\n", hdr_p->len);
 
-        const struct ip *ip_hdr = (struct ip *) find_iphdr(buf_p);
+        const struct ip *ip_hdr = (struct ip *)find_iphdr(buf_p);
 
         if (ip_hdr == NULL) // Not ETHERTYPE_IP.
         {
@@ -307,10 +343,15 @@ int main(int argc, char *argv[])
                 pstate->f_tm = localtime(&hdr_p->ts.tv_sec);
             }
 
-            if (pstate->anonymize != 0)
+            if (pstate->anonymize != 0) // Are we using CryptoPAN?
             {
                 srcip = BSWAP(scramble_ip4(ip_hdr->ip_src.s_addr, 16));
                 dstip = BSWAP(scramble_ip4(ip_hdr->ip_dst.s_addr, 16));
+            }
+            else if (pstate->cache == 1) // Do we have a precomputed anonymization table?
+            {
+                srcip = BSWAP(pstate->ip4cache[ip_hdr->ip_src.s_addr]);
+                dstip = BSWAP(pstate->ip4cache[ip_hdr->ip_dst.s_addr]);
             }
             else
             {
