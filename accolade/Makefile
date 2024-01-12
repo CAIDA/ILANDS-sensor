@@ -16,7 +16,7 @@ else
 CFLAGS += -O3 -DNDEBUG
 endif
 
-ALL_FILES  = gbdeserialize makecache pcap2grb anic2grb
+ALL_FILES  = gbdeserialize makecache gbdump iplist2grb pcap2grb anic2grb
 WITHYAML = $(if $(wildcard /usr/include/yaml.h),y)
 
 all: $(ALL_FILES)
@@ -34,6 +34,12 @@ gbdeserialize: gbdeserialize.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(GRAPHBLAS_LIBS) $(OTHER_LIBS) 
 
 makecache: makecache.c cryptopANT.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(OTHER_LIBS) 
+
+gbdump: gdbump.c 
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(OTHER_LIBS) 
+
+iplist2grb: iplist2grb.c 
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(OTHER_LIBS) 
 
 pcap2grb: pcap2grb.c cryptopANT.c
