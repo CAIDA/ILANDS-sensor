@@ -36,7 +36,7 @@ gbdeserialize: gbdeserialize.c
 makecache: makecache.c cryptopANT.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(OTHER_LIBS) 
 
-gbdump: gdbump.c 
+gbdump: gbdump.c 
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(OTHER_LIBS) 
 
 iplist2grb: iplist2grb.c 
