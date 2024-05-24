@@ -1,0 +1,13 @@
+---
+BasedOnStyle: Microsoft
+AccessModifierOffset: -4
+AlignArrayOfStructures: Left
+AlignConsecutiveAssignments:
+  Enabled: true
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: true
+IndentCaseLabels: true
+AlignOperands: false
+ContinuationIndentWidth: 4
+Cpp11BracedListStyle: false
