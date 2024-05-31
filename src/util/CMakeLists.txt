@@ -6,10 +6,6 @@ add_executable(gbdump gbdump.c)
 target_link_libraries(gbdump "${GRAPHBLAS_LIBRARIES}" "${OPENSSL_LIBRARIES}")
 install(TARGETS gbdump DESTINATION bin)
 
-add_executable(randgrb randgrb.c)
-target_link_libraries(randgrb "${GRAPHBLAS_LIBRARIES}" "${OPENSSL_LIBRARIES}")
-install(TARGETS randgrb DESTINATION bin)
-
 add_executable(gbdeserialize gbdeserialize.c)
 target_link_libraries(gbdeserialize "${GRAPHBLAS_LIBRARIES}")
 
