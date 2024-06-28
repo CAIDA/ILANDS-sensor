@@ -59,7 +59,9 @@
         pid_t _mytid = syscall(SYS_gettid);                                                                            \
         clock_gettime(clocktype, &ts_start);                                                                           \
         t_ts = ((ts_start.tv_sec * 1e9) + (ts_start.tv_nsec)) * 1e-9;                                                  \
-        fprintf(stderr, "[%d] [%.2f] [%s] Section begin.\n", _mytid, t_ts, msg);                                       \
+        if (*msg != '\0') {                                                                                            \
+            fprintf(stderr, "[%d] [%.2f] [%s] Section begin.\n", _mytid, t_ts, msg);                                   \
+        }                                                                                                              \
     }
 
 #define TOC(clocktype, msg)                                                                                            \
@@ -71,7 +73,9 @@
         timespec_diff(&ts_end, &ts_start, &tsdiff);                                                                    \
         t_ts      = ((ts_start.tv_sec * 1e9) + (ts_start.tv_nsec)) * 1e-9;                                             \
         t_elapsed = ((tsdiff.tv_sec * 1e9) + (tsdiff.tv_nsec)) * 1e-9;                                                 \
-        fprintf(stderr, "[%d] [%.2f] [%s] elapsed %.2fs\n", _mytid, t_ts, msg, t_elapsed);                             \
+        if (*msg != '\0') {                                                                                            \
+            fprintf(stderr, "[%d] [%.2f] [%s] elapsed %.2fs\n", _mytid, t_ts, msg, t_elapsed);                         \
+        }                                                                                                              \
     }
 
 // Calculate time elapsed between two struct timespec, return struct timespec.
@@ -132,28 +136,51 @@ struct px3_state
     uint32_t npkts;
     uint32_t windowsize;
     uint32_t subwinsize;
+    double t_grb;
+    double t_json;
 };
 
 struct px3_state *pstate; // global state
 
 void usage(const char *name)
 {
-    printf("usage: %s [-a anonymize.key] [-b[i][o]] <-i INPUT_FILE | -s unix-socket-path> [-o OUTPUT_DIRECTORY] [-S] "
-           "[-t TMPDIR] [-W windowsize] [-w subwinsize]\n",
-           name);
+//                   12345678901234567890123456789012345678901234567890123456789012345678901234567890
+    fprintf(stderr, "usage: %s [-a anonymize.key] [-b[i][o]] [-O] [-o OUTPUT_DIRECTORY] [-S] [-s] [-t TMPDIR] [-W FILES_PER_WINDOW] [-w SUBWINSIZE] -i INPUT_FILE\n", name);
+    fprintf(stderr, "\n");
+    fprintf(stderr, "    -a Anonymize using CryptopANT (https://ant.isi.edu/software/cryptopANT/index.html)\n");
+    fprintf(stderr, "       If CryptoPAN anonymization keyfile does not exist, a random key will be generated and saved.\n");
+    fprintf(stderr, "    -b Binary (raw) input/output");
+    fprintf(stderr, "    -i Input file (json formatted flow records).\n");
+    fprintf(stderr, "    -O Single file mode - one tar file containing one GraphBLAS matrix.\n");
+    fprintf(stderr, "    -o Output directory (where filled tar files are moved).\n");
+    fprintf(stderr, "    -S Swap byte order of IPv4 addresses.\n");
+    fprintf(stderr, "    -s Select socket input mode.\n");
+    fprintf(stderr, "    -t Temporary directory for building unfilled tar files.\n");
+    fprintf(stderr, "    -W Number of GraphBLAS matrices to save in the output tar file.\n");
+    fprintf(stderr, "    -w Window size (number of entries) in the saved GraphBLAS matrices.\n");
 }
 
-void set_output_filename(void)
+void set_output_filename(const char *f_name)
 {
-    time_t tm;
-    char timestr[16];
+    if (f_name == NULL)
+    {
+        time_t tm;
+        char timestr[16];
 
-    tm = time(0);
-    strftime(timestr, sizeof(timestr), "%Y%m%d-%H%M%S", localtime(&tm));
-    snprintf(pstate->f_name, sizeof(pstate->f_name), "%s/%s.%d.%s", pstate->tmpdir, timestr, pstate->windowsize,
-             (pstate->binary & 2) ? "dat" : "tar");
+        tm = time(0);
+        strftime(timestr, sizeof(timestr), "%Y%m%d-%H%M%S", localtime(&tm));
+        snprintf(pstate->f_name, sizeof(pstate->f_name), "%s/%s.%d.%s", pstate->tmpdir, timestr, pstate->windowsize,
+                 (pstate->binary & 2) ? "dat" : "tar");
+    }
+    else
+    {
+        strncpy(pstate->f_name, f_name, sizeof(pstate->f_name));
+    }
 
-    fprintf(stderr, "Output %s file is '%s'.\n", (pstate->binary & 2) ? "dat" : "tar", pstate->f_name);
+    if (pstate->f_name[0] != '\0')
+    {
+        fprintf(stderr, "Output %s file is '%s'.\n", (pstate->binary & 2) ? "dat" : "tar", pstate->f_name);
+    }
 
     pstate->findex = 0;
 }
@@ -161,6 +188,11 @@ void set_output_filename(void)
 void dump_binary(void)
 {
     int fd;
+
+    if (pstate->f_name[0] == '\0')
+    {
+        set_output_filename(NULL);
+    }
 
     if ((fd = open(pstate->f_name, O_CREAT | O_WRONLY | O_APPEND, 0660)) == -1)
     {
@@ -230,6 +262,15 @@ int load_binary(FILE *in)
     return (pstate->rec);
 }
 
+void move_file_to_dir(const char *src, const char *dst_dir)
+{
+    char cmd[PATH_MAX * 2 + 12] = "";
+
+    fprintf(stderr, "Moving output tar file, '%s', to output directory.\n", src);
+    snprintf(cmd, sizeof(cmd), "/bin/mv %s %s/", src, dst_dir);
+    system(cmd);
+}
+
 void add_to_tar(void *blob_data, unsigned int blob_size)
 {
     int tarfd;
@@ -237,6 +278,11 @@ void add_to_tar(void *blob_data, unsigned int blob_size)
     const unsigned char *th_ptr = (const unsigned char *)&th;
     size_t tmp_chksum           = 0;
     size_t aligned;
+
+    if (pstate->f_name[0] == '\0')
+    {
+        set_output_filename(NULL);
+    }
 
     if ((tarfd = open(pstate->f_name, O_CREAT | O_WRONLY | O_APPEND, 0660)) == -1)
     {
@@ -285,16 +331,13 @@ void add_to_tar(void *blob_data, unsigned int blob_size)
 
     close(tarfd);
 
-    if (pstate->findex * pstate->subwinsize >= pstate->windowsize)
+    if (pstate->findex >= pstate->windowsize)
     {
         if (pstate->out_prefix != NULL)
         {
-            char cmd[PATH_MAX * 2 + 12] = "";
-
-            snprintf(cmd, sizeof(cmd), "/bin/mv %s %s/", pstate->f_name, pstate->out_prefix);
-            system(cmd);
+            move_file_to_dir(pstate->f_name, pstate->out_prefix);
         }
-        set_output_filename();
+        set_output_filename("");
     }
 }
 
@@ -305,12 +348,18 @@ void build_and_store_matrix(void)
     GrB_Index blob_size = 0;
     GrB_Descriptor desc = NULL;
 
+    struct timespec ts_start; // for TIC() and TOC()
+    double t_elapsed = 0;     // for TIC() and TOC()
+
+    TIC(CLOCK_REALTIME, "");
     LAGRAPH_TRY_EXIT(GrB_Matrix_new(&Gmat, GrB_UINT32, 4294967296, 4294967296));
     LAGRAPH_TRY_EXIT(GrB_Matrix_build(Gmat, pstate->R, pstate->C, pstate->V, pstate->rec, GrB_PLUS_UINT32));
 
     GrB_Descriptor_new(&desc);
     GxB_Desc_set(desc, GxB_COMPRESSION, GxB_COMPRESSION_ZSTD + 1);
     LAGRAPH_TRY_EXIT(GxB_Matrix_serialize(&blob, &blob_size, Gmat, desc));
+    TOC(CLOCK_REALTIME, "");
+    pstate->t_grb += t_elapsed;
 
     add_to_tar(blob, blob_size);
 
@@ -378,6 +427,11 @@ void add_packets(in_addr_t src_saddr, in_addr_t dst_saddr, uint32_t npkts)
 
 void process_suricata_flow_yyjson_line(char *str, size_t len)
 {
+    struct timespec ts_start; // for TIC() and TOC()
+    double t_elapsed = 0;     // for TIC() and TOC()
+
+    TIC(CLOCK_REALTIME, "");
+
     yyjson_read_err err;
     yyjson_doc *doc = yyjson_read_opts(str, len, YYJSON_READ_STOP_WHEN_DONE, NULL, &err);
 
@@ -387,7 +441,7 @@ void process_suricata_flow_yyjson_line(char *str, size_t len)
     if (doc == NULL)
     {
         fprintf(stderr, "yyjson parse error: %s\n", err.msg);
-        return;
+        goto errexit_yyjson;
     }
 
     yyjson_val *root_val = yyjson_doc_get_root(doc);
@@ -396,8 +450,7 @@ void process_suricata_flow_yyjson_line(char *str, size_t len)
     if (flow_val == NULL)
     {
         fprintf(stderr, "yyjson: no 'flow' found in JSON string.\n");
-        yyjson_doc_free(doc);
-        return;
+        goto errexit_yyjson;
     }
 
     yyjson_val *src_ip_val = yyjson_obj_get(root_val, "src_ip");
@@ -438,7 +491,12 @@ void process_suricata_flow_yyjson_line(char *str, size_t len)
     add_packets(dst_saddr, src_saddr, pkts_toclient);
 
 errexit_yyjson:
-    yyjson_doc_free(doc);
+    if (doc != NULL)
+    {
+        yyjson_doc_free(doc);
+    }
+    TOC(CLOCK_REALTIME, "");
+    pstate->t_json += t_elapsed;
     return;
 }
 
@@ -513,9 +571,8 @@ int main(int argc, char *argv[])
 {
     int c, ret, reqargs = 0; // for getopt
     FILE *in;
-    char in_f[PATH_MAX];
+    char in_f[PATH_MAX] = "";
     int socket                 = 0;
-    char socket_path[PATH_MAX] = "";
     char anonkey[PATH_MAX];
     size_t filesize;
     size_t offset;
@@ -523,17 +580,21 @@ int main(int argc, char *argv[])
     double t_elapsed       = 0; // for TIC() and TOC()
     uint64_t total_records = 0;
     char buf[BUFFERSIZE];
+    int partial = 0;
 
     pstate                = calloc(1, sizeof(struct px3_state));
     pstate->anonymize     = 0;
     pstate->binary        = 0;
     pstate->swapped       = 0;
+    pstate->npkts         = 0;
     pstate->total_packets = 0;
     pstate->tmpdir        = ".";
-    pstate->windowsize    = WINDOWSIZE;
-    pstate->subwinsize    = SUBWINSIZE;
+    pstate->windowsize    = 64;      // WINDOWSIZE;
+    pstate->subwinsize    = 1 << 17; // SUBWINSIZE;
+    pstate->t_grb         = 0;
+    pstate->t_json        = 0;
 
-    while ((c = getopt(argc, argv, "Sa:b:i:o:s:t:W:w:")) != -1)
+    while ((c = getopt(argc, argv, "Sa:b:i:O::o:pst:W:w:")) != -1)
     {
         switch (c)
         {
@@ -557,14 +618,25 @@ int main(int argc, char *argv[])
             case 'S':
                 pstate->swapped = 1;
                 break;
+            case 'O':
+                pstate->windowsize = 1;
+                pstate->subwinsize = UINT_MAX;
+                if (optarg != NULL)
+                {
+                    set_output_filename(optarg);
+                }
+                break;
             case 'o':
                 // output dir
                 pstate->out_prefix = strdup(optarg);
                 break;
+            case 'p':
+                // output partial matricies
+                partial = 1;
+                break;
             case 's':
                 // unix socket input
-                reqargs++;
-                snprintf(socket_path, sizeof(socket_path), "%s", optarg);
+                socket = 1;
                 break;
             case 't':
                 pstate->tmpdir = strdup(optarg);
@@ -614,9 +686,9 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (*socket_path != 0)
+    if (socket == 1)
     {
-        socket = setup_socket(socket_path);
+        socket = setup_socket(in_f);
     }
     else
     {
@@ -644,10 +716,6 @@ int main(int argc, char *argv[])
     pstate->V = malloc(sizeof(uint32_t) * pstate->subwinsize);
 
     GrB_init(GrB_NONBLOCKING);
-
-    set_output_filename();
-
-    pstate->npkts = 0;
 
     offset = 0;
     if (socket == 0)
@@ -729,6 +797,8 @@ int main(int argc, char *argv[])
         }
 
         close(socket);
+
+        unlink(in_f); // remove socket file
     }
 
     if (offset > 0) // handle any trailing JSON
@@ -745,7 +815,27 @@ int main(int argc, char *argv[])
     {
         if (pstate->rec > 0)
         {
-            build_and_store_matrix();
+            if ((partial == 1) || (pstate->subwinsize == UINT_MAX))
+            {
+                fprintf(stderr, "Adding trailing %u packets to tar file.\n", pstate->rec);
+                build_and_store_matrix();
+            }
+            else
+            {
+                fprintf(stderr, "INFO: Not processing %u remaining packets (less than matrix size of %u).\n", pstate->rec, pstate->subwinsize);
+            }
+        }
+        if (pstate->findex > 0)
+        {
+            if (partial == 1)
+            {
+                fprintf(stderr, "INFO: Partial option selected -- unfilled tar file will be moved.\n", pstate->f_name);
+                move_file_to_dir(pstate->f_name, pstate->out_prefix);
+            }
+            else
+            {
+                fprintf(stderr, "INFO: Not moving unfilled tar file, '%s' (less than window size of %u).\n", pstate->f_name, pstate->windowsize * pstate->subwinsize);
+            }
         }
     }
 
@@ -755,6 +845,9 @@ int main(int argc, char *argv[])
 
     fprintf(stderr, "Done: %ld records.  (%.2f / sec)\n", total_records, total_records / t_elapsed);
     fprintf(stderr, "Done: %ld packets.  (%.2f pps)\n", pstate->total_packets, pstate->total_packets / t_elapsed);
+
+    fprintf(stderr, "GrB: elapsed %.2fs\n", pstate->t_grb);
+    fprintf(stderr, "yyjson: elapsed %.2fs\n", pstate->t_json);
 
     exit(0);
 }

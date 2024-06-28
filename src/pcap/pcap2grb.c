@@ -52,6 +52,7 @@ struct px3_state
     uint32_t findex;
     GrB_Index *R, *C;
     uint32_t *V;
+    uint32_t *ip4cache;
 };
 
 /// @brief 512-byte POSIX tar file header.
@@ -145,6 +146,7 @@ void usage(const char *name)
     fprintf(stderr, "    -a Anonymize using CryptopANT (https://ant.isi.edu/software/cryptopANT/index.html)\n");
     fprintf(stderr,
             "       If CryptoPAN anonymization keyfile does not exist, a random key will be generated and saved.\n");
+    fprintf(stderr, "    -c Path to precomputed IPv4 anonymization table (generated with makecache).\n");
     fprintf(stderr, "    -W Number of GraphBLAS matrices to save in the output tar file.\n");
     fprintf(stderr, "    -w Window size (number of entries) in the saved GraphBLAS matrices.\n");
     fprintf(stderr, "    -O Single file mode - one tar file containing one GraphBLAS matrix..\n");
@@ -262,7 +264,7 @@ void add_blob_to_tar(void *blob_data, unsigned int blob_size)
 int main(int argc, char *argv[])
 {
     FILE *in;
-    char in_f[PATH_MAX], anonkey[PATH_MAX];
+    char in_f[PATH_MAX], anonkey[PATH_MAX], cachefile[PATH_MAX];
     pcap_t *pcap;
     char errbuf[PCAP_ERRBUF_SIZE];
     char *value = NULL;      // for getopt
@@ -279,7 +281,7 @@ int main(int argc, char *argv[])
     pstate->subwinsize       = SUBWINSIZE; // 131072
     pstate->files_per_window = 64;         // 64 x 131072 = 8388608 (default)
 
-    while ((c = getopt(argc, argv, "SOva:i:o:w:W:")) != -1)
+    while ((c = getopt(argc, argv, "SO:va:c:i:o:w:W:")) != -1)
     {
         switch (c)
         {
@@ -287,6 +289,10 @@ int main(int argc, char *argv[])
                 value             = optarg;
                 pstate->anonymize = 1;
                 snprintf(anonkey, sizeof(anonkey), "%s", value);
+                break;
+            case 'c':
+                snprintf(cachefile, sizeof(cachefile) - 1, "%s", optarg);
+                pstate->anonymize = 2;
                 break;
             case 'i':
                 // input
@@ -307,6 +313,10 @@ int main(int argc, char *argv[])
                 pstate->files_per_window      = 1;
                 pstate->subwinsize            = UINT_MAX;
                 pstate->save_trailing_packets = 1;
+                if (optarg != NULL)
+                {
+                    strncpy(pstate->f_name, optarg, sizeof(pstate->f_name) - 1);
+                }
                 break;
             case 'W':
                 // files per window
@@ -335,7 +345,8 @@ int main(int argc, char *argv[])
                 }
                 break;
             case '?':
-                if (optopt == 'i' || optopt == 'o' || optopt == 'a')
+                if (optopt == 'i' || optopt == 'o' || optopt == 'a' || optopt == 'c' || optopt == 'w' ||
+                    optopt == 'W' || optopt == 'O')
                 {
                     fprintf(stderr, "Option -%c requires an argument.\n", optopt);
                 }
@@ -361,7 +372,7 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    if (pstate->anonymize != 0)
+    if (pstate->anonymize == 1)
     {
         fprintf(stderr, "anonymizing using scramble keyfile: %s\n", anonkey);
         if (scramble_init_from_file(anonkey, SCRAMBLE_BLOWFISH, SCRAMBLE_BLOWFISH, NULL) < 0)
@@ -369,6 +380,33 @@ int main(int argc, char *argv[])
             fprintf(stderr, "scramble_init_from_file(): nope\n");
             return 1;
         }
+    }
+    else if (pstate->anonymize == 2)
+    {
+        FILE *fp;
+        size_t filesize = 0, ret = 0;
+
+        fprintf(stderr, "loading anonymization table: %s\n", cachefile);
+        pstate->ip4cache = malloc(sizeof(uint32_t) * (UINT_MAX - 1));
+
+        if ((fp = fopen(cachefile, "rb")) == NULL)
+        {
+            perror("fopen");
+            return 1;
+        }
+
+        fseek(fp, 0L, SEEK_END);
+        filesize = ftell(fp);
+        fseek(fp, 0L, SEEK_SET);
+        fprintf(stderr, "table is %ld bytes\n", filesize);
+
+        if ((ret = fread(pstate->ip4cache, filesize, 1, fp)) < 1)
+        {
+            perror("fread");
+            return 1;
+        }
+
+        fclose(fp);
     }
 
     if (!strcmp(in_f, "-"))
@@ -445,7 +483,10 @@ int main(int argc, char *argv[])
                 if (pstate->f_tm == NULL)
                 {
                     pstate->f_tm = localtime(&hdr_p->ts.tv_sec);
-                    set_output_filename();
+                    if (pstate->f_name[0] == '\0')
+                    {
+                        set_output_filename();
+                    }
                 }
                 else
                 {
@@ -453,12 +494,17 @@ int main(int argc, char *argv[])
                 }
             }
 
-            if (pstate->anonymize != 0)
+            if (pstate->anonymize == 1) // CryptopANT
             {
                 srcip = scramble_ip4(BSWAP(ip_hdr->ip_src.s_addr), 16);
                 dstip = scramble_ip4(BSWAP(ip_hdr->ip_dst.s_addr), 16);
             }
-            else
+            else if (pstate->anonymize == 2) // precomputed anonymization table
+            {
+                srcip = pstate->ip4cache[BSWAP(ip_hdr->ip_src.s_addr)];
+                dstip = pstate->ip4cache[BSWAP(ip_hdr->ip_dst.s_addr)];
+            }
+            else // no anonymization
             {
                 srcip = BSWAP(ip_hdr->ip_src.s_addr);
                 dstip = BSWAP(ip_hdr->ip_dst.s_addr);

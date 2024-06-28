@@ -1,3 +1,5 @@
+#define _GNU_SOURCE 1
+
 #include <fcntl.h>
 #include <pthread.h>
 #include <rte_eal.h>
@@ -93,14 +95,14 @@ struct graphblas_worker_args
 static const struct rte_eth_conf port_conf_default = {
     .rxmode =
         {
-                 .mq_mode = ETH_MQ_RX_RSS,
+                 .mq_mode = RTE_ETH_MQ_RX_RSS,
                  },
     .rx_adv_conf =
         {
                  .rss_conf =
                 {
                     .rss_key = NULL,
-                    .rss_hf  = ETH_RSS_TCP,
+                    .rss_hf  = RTE_ETH_RSS_TCP,
                 }, },
 };
 
