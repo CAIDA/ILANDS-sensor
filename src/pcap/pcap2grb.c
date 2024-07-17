@@ -264,9 +264,9 @@ void add_blob_to_tar(void *blob_data, unsigned int blob_size)
 int main(int argc, char *argv[])
 {
     FILE *in;
-    char in_f[PATH_MAX], anonkey[PATH_MAX], cachefile[PATH_MAX];
+    char in_f[PATH_MAX] = {0}, anonkey[PATH_MAX] = {0}, cachefile[PATH_MAX] = {0};
     pcap_t *pcap;
-    char errbuf[PCAP_ERRBUF_SIZE];
+    char errbuf[PCAP_ERRBUF_SIZE] = {0};
     char *value = NULL;      // for getopt
     int c, ret, reqargs = 0; // for getopt
     size_t filesize, filepos;
@@ -313,6 +313,7 @@ int main(int argc, char *argv[])
                 pstate->files_per_window      = 1;
                 pstate->subwinsize            = UINT_MAX;
                 pstate->save_trailing_packets = 1;
+                reqargs++;
                 if (optarg != NULL)
                 {
                     strncpy(pstate->f_name, optarg, sizeof(pstate->f_name) - 1);
@@ -365,7 +366,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (reqargs < 2)
+    if (reqargs < 2 || in_f[0] == 0 )
     {
         fprintf(stderr, "Invalid or insufficient arguments.\n");
         usage(argv[0]);
@@ -434,6 +435,9 @@ int main(int argc, char *argv[])
         fflush(stderr);
         return 1;
     }
+
+    if( pstate->out_prefix == NULL )
+        pstate->out_prefix = strdup(".");
 
     pstate->link_type = pcap_datalink(pcap);
     fprintf(stderr, "input pcap file is of type %s\n", pcap_datalink_val_to_name(pstate->link_type));
