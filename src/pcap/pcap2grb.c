@@ -141,7 +141,7 @@ static inline void timespec_diff(struct timespec *a, struct timespec *b, struct 
 void usage(const char *name)
 {
     fprintf(stderr,
-            "usage: %s [-a anonymize.key] [-W FILES_PER_WINDOW] [-w SUBWINSIZE] -i INPUT_FILE -o OUTPUT_DIRECTORY\n",
+            "usage: %s [-a anonymize.key] [-W FILES_PER_WINDOW] [-w SUBWINSIZE] [-O output_file_name] -i INPUT_FILE -o OUTPUT_DIRECTORY\n",
             name);
     fprintf(stderr, "    -a Anonymize using CryptopANT (https://ant.isi.edu/software/cryptopANT/index.html)\n");
     fprintf(stderr,
@@ -437,13 +437,26 @@ int main(int argc, char *argv[])
 
     pstate->link_type = pcap_datalink(pcap);
     fprintf(stderr, "input pcap file is of type %s\n", pcap_datalink_val_to_name(pstate->link_type));
-    fprintf(stderr, "Generating tar files with %u matrices of size: %u\n", pstate->files_per_window,
-            pstate->subwinsize);
-
     GrB_init(GrB_NONBLOCKING);
 
     GrB_Matrix Gmat;
     GrB_Descriptor desc = NULL;
+
+    if( pstate->subwinsize == UINT_MAX )
+    {
+        int packets_in_file = 0;
+        long pos = ftell(pcap_file(pcap));
+
+        while( (ret = pcap_next_ex(pcap, &hdr_p, &buf_p)) >= 0 )
+            packets_in_file++;
+
+        fseek(pcap_file(pcap), pos, SEEK_SET);
+        pstate->subwinsize = packets_in_file;
+        fprintf(stderr, "Single file mode, %d packets in pcap file.\n", pstate->subwinsize);
+    }
+
+    fprintf(stderr, "Generating tar files with %u matrices of size: %u\n", pstate->files_per_window,
+            pstate->subwinsize);
 
     pstate->R = malloc(sizeof(GrB_Index) * pstate->subwinsize);
     pstate->C = malloc(sizeof(GrB_Index) * pstate->subwinsize);
