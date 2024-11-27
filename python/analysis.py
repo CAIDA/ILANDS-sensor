@@ -11,6 +11,7 @@ import shutil
 
 
 def get_matrix_from_grb(filename):
+    """Extract graphblas matrix from .grb file"""
     with open(filename, "rb") as f:
         file_bytes = f.read()
     return gb.Matrix.ss.deserialize(file_bytes)
@@ -23,8 +24,26 @@ def process_tarball(tarball_filename: str,
                     ignored_grbs: Optional[list[str]] = None
                     ) \
         -> Union[gb.Matrix, Tuple[gb.Matrix, list[str]]]:
+    """
+    Extract tarball of .grb files and sum extracted graphblas matrices
+        Inputs:
+            tarball_filename - relative or absolute path to *.tar file
+            n_rows - (optional, default 2 ** 32) # of rows that the processed matrix should have
+            n_
+            cols - (optional, default 2 ** 32) # of columns that the processed matrix should have
+            return_grb_list - (optional, default false) Boolean indicating whether
+                the list of names of processed grb files should be returned
+            ignored_grbs - (optional, default None) list of grb filenames that should
+                be ignored during processing of the tarball
+        Outputs:
+            processed_grb - sum of the extracted graphblas matrices
+                from *.grb files contained in [tarball_filename]
+            grb_list - (optional, if return_grb_list is True) list of the *.grb files contained in the tarball that
+                were processed (does not include any of the ignored grbs from ignored_grbs optional input)
+    """
     assert tarfile.is_tarfile(tarball_filename)
     directory = os.path.dirname(tarball_filename)
+    directory = "." if directory == "" else directory
     if ignored_grbs is None:
         ignored_grbs = []
     with tarfile.open(name=tarball_filename, mode='r') as tarball:
@@ -50,6 +69,41 @@ def process_tarball(tarball_filename: str,
         return processed_graphblas_matrix
 
 
+def process_ranges_tarball(tarball_filename: str
+                           ) \
+        -> list[gb.Matrix]:
+    """
+        Extract tarball of .grb files and output output list of corresponding GraphBLAS matrices
+            Inputs:
+                tarball_filename - relative or absolute path to *.tar file
+            Outputs:
+                processed_grb_list - list of the gb.Matrix files corresponding to the *.grb files contained
+                    in the tarball that were processed
+            Notes:
+                * The extracted python-graphblas matrices are assumed to be diagonal matrices intended for use as
+                    source and/or destination ranges for range-level analysis of a TrafficMatrix
+        """
+    assert tarfile.is_tarfile(tarball_filename)
+    directory = os.path.dirname(tarball_filename)
+    directory = "." if directory == "" else directory
+    with tarfile.open(name=tarball_filename, mode='r') as tarball:
+        tarball_list = tarball.getmembers()
+        processed_grb_list = list()
+        for file_info in tarball_list:
+            next_graphblas_matrix_name = file_info.name
+            if next_graphblas_matrix_name[-4:] == ".grb":
+                tarball.extract(next_graphblas_matrix_name, path=directory)
+                next_graphblas_matrix = get_matrix_from_grb(directory + "/" + next_graphblas_matrix_name)
+                processed_grb_list.append(next_graphblas_matrix)
+                try:
+                    os.remove(directory + "/" + next_graphblas_matrix_name)
+                except FileNotFoundError:
+                    continue
+            else:
+                continue
+    return processed_grb_list
+
+
 def _hierarchical_sum(file_list: list,
                       extraction_func: Callable,
                       grbs_per_level: int,
@@ -58,6 +112,21 @@ def _hierarchical_sum(file_list: list,
                       print_time_info: bool = False,
                       file_type: Optional[str] = None
                       ) -> gb.Matrix:
+    """
+    Internal function summing a list of matrices by forming a sum tree where (whenever possible)
+        the number of children of any non-leaf node is equal to provided parameter
+        Inputs:
+            file_list - list of paths to serialized graphblas matrices to hierarchically sum
+            extraction_func - function that should be called on each file in file_list to get extracted matrix
+            grbs_per_level - how many children each parent node should (ideally) have
+            n_rows - # of rows the processed matrix should have
+            n_cols - # of columns the processed matrix should have
+            print_time_info - (optional, default False) boolean indicating if time taken to process each file
+                should be output during run
+            file_type - (optional, default None) string indicating the types of files being processed
+        Outputs:
+            processed_graphblas_matrix - hierarchically summation of all included matrices
+    """
     if len(file_list) == 0:
         return gb.Matrix(dtype=int, nrows=2 ** 32, ncols=2 ** 32)
 
@@ -121,6 +190,9 @@ def process_tarball_hierarchically(tarball_filename: str,
                                    return_grb_list: bool = False,
                                    ignored_grbs: Optional[list[str]] = None
                                    ) -> Union[gb.Matrix, Tuple[gb.Matrix, list[str]]]:
+    """
+    Extract tarball of .grb files and hierarchically sum extracted graphblas matrices.
+    """
     assert tarfile.is_tarfile(tarball_filename)
     subdirectory = tarball_filename + "-workspace"
     try:
@@ -271,45 +343,37 @@ class TrafficMatrix:
     def sub_n_packets(self):
         n_source_ranges = len(self.source_ranges)
         n_destination_ranges = len(self.destination_ranges)
-        sub_n_packets = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1), dtype=int)
+        sub_n_packets = np.empty(shape=(n_source_ranges, n_destination_ranges), dtype=int)
         for key in self.submatrices.keys():
             submatrix = self.submatrices[key]
             sub_n_packets[key] = valid_packets(submatrix)
-        sub_n_packets[n_source_ranges, n_destination_ranges] \
-            = self.n_packets() - np.sum(sub_n_packets[:n_source_ranges, :n_destination_ranges])
         return sub_n_packets
 
     def sub_n_sources(self):
         n_source_ranges = len(self.source_ranges)
         n_destination_ranges = len(self.destination_ranges)
-        sub_n_sources = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1), dtype=int)
+        sub_n_sources = np.empty(shape=(n_source_ranges, n_destination_ranges), dtype=int)
         for key in self.submatrices.keys():
             submatrix = self.submatrices[key]
             sub_n_sources[key] = unique_sources(submatrix)
-        sub_n_sources[n_source_ranges, n_destination_ranges] \
-            = self.n_sources() - np.sum(sub_n_sources[:n_source_ranges, :n_destination_ranges])
         return sub_n_sources
 
     def sub_n_destinations(self):
         n_source_ranges = len(self.source_ranges)
         n_destination_ranges = len(self.destination_ranges)
-        sub_n_destinations = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1), dtype=int)
+        sub_n_destinations = np.empty(shape=(n_source_ranges, n_destination_ranges), dtype=int)
         for key in self.submatrices.keys():
             submatrix = self.submatrices[key]
             sub_n_destinations[key] = unique_destinations(submatrix)
-        sub_n_destinations[n_source_ranges, n_destination_ranges] \
-            = self.n_destinations() - np.sum(sub_n_destinations[:n_source_ranges, :n_destination_ranges])
         return sub_n_destinations
 
     def sub_n_links(self):
         n_source_ranges = len(self.source_ranges)
         n_destination_ranges = len(self.destination_ranges)
-        sub_n_links = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1), dtype=int)
+        sub_n_links = np.empty(shape=(n_source_ranges, n_destination_ranges), dtype=int)
         for key in self.submatrices.keys():
             submatrix = self.submatrices[key]
             sub_n_links[key] = unique_links(submatrix)
-        sub_n_links[n_source_ranges, n_destination_ranges] \
-            = self.n_links() - np.sum(sub_n_links[:n_source_ranges, :n_destination_ranges])
         return sub_n_links
 
     def update(self, filename: Union[str, list[str]],
@@ -502,17 +566,17 @@ class TrafficMatrix:
         n_source_ranges = len(self.source_ranges)
         n_destination_ranges = len(self.destination_ranges)
 
-        sub_max_packets = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1), dtype=int)
-        sub_max_packets_links = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1))
-        sub_max_source_packets = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1), dtype=int)
-        sub_max_source_packets_sources = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1))
-        sub_max_destination_packets = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1), dtype=int)
+        sub_max_packets = np.empty(shape=(n_source_ranges, n_destination_ranges), dtype=int)
+        sub_max_packets_links = np.empty(shape=(n_source_ranges, n_destination_ranges))
+        sub_max_source_packets = np.empty(shape=(n_source_ranges, n_destination_ranges), dtype=int)
+        sub_max_source_packets_sources = np.empty(shape=(n_source_ranges, n_destination_ranges))
+        sub_max_destination_packets = np.empty(shape=(n_source_ranges, n_destination_ranges), dtype=int)
         sub_max_destination_packets_destinations \
-            = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1))
-        sub_max_fan_out = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1), dtype=int)
-        sub_max_fan_out_sources = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1))
-        sub_max_fan_in = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1), dtype=int)
-        sub_max_fan_in_destinations = np.empty(shape=(n_source_ranges + 1, n_destination_ranges + 1))
+            = np.empty(shape=(n_source_ranges, n_destination_ranges))
+        sub_max_fan_out = np.empty(shape=(n_source_ranges, n_destination_ranges), dtype=int)
+        sub_max_fan_out_sources = np.empty(shape=(n_source_ranges, n_destination_ranges))
+        sub_max_fan_in = np.empty(shape=(n_source_ranges, n_destination_ranges), dtype=int)
+        sub_max_fan_in_destinations = np.empty(shape=(n_source_ranges, n_destination_ranges))
 
         # calculate network quantities for whole traffic matrix
 
@@ -574,8 +638,8 @@ class TrafficMatrix:
                 sub_max_fan_in_destinations[key] = max_fan_in_destinations_sub
             else:
                 _, max_packets_sub = valid_packets(submatrix, return_max_packets=True)
-                max_source_packets_sub = max_source_packets(submatrix)
-                max_destination_packets_sub = max_destination_packets(submatrix)
+                max_source_packets_sub = max_packets_by_sources(submatrix)
+                max_destination_packets_sub = max_packets_by_destinations(submatrix)
                 _, max_fan_out_sub = unique_sources(submatrix, return_max_fan_out=True)
                 _, max_fan_in_sub = unique_destinations(submatrix, return_max_fan_in=True)
 
@@ -588,52 +652,28 @@ class TrafficMatrix:
         results = dict()
 
         if count_multiplicities:
-            sub_max_packets_links[n_source_ranges, n_destination_ranges] \
-                = max_packets_links - np.sum(sub_max_packets_links[:n_source_ranges, :n_destination_ranges])
-            sub_max_source_packets_sources[n_source_ranges, n_destination_ranges] \
-                = (max_source_packets_sources
-                   - np.sum(sub_max_source_packets_sources[:n_source_ranges, :n_destination_ranges]))
-            sub_max_destination_packets_destinations[n_source_ranges, n_destination_ranges] \
-                = (max_destination_packets_destinations
-                   - np.sum(sub_max_destination_packets_destinations[:n_source_ranges, :n_destination_ranges]))
-            sub_max_fan_out_sources[n_source_ranges, n_destination_ranges] \
-                = max_fan_out_sources - np.sum(sub_max_fan_out_sources[:n_source_ranges, :n_destination_ranges])
-            sub_max_fan_in_destinations[n_source_ranges, n_destination_ranges] \
-                = (max_fan_in_destinations
-                   - np.sum(sub_max_fan_in_destinations[:n_source_ranges, :n_destination_ranges]))
+            results["max_packets_links"] = str(max_packets_links)
+            results["max_source_packets_sources"] = str(max_source_packets_sources)
+            results["max_destination_packets_destinations"] = str(max_destination_packets_destinations)
+            results["max_fan_out_sources"] = str(max_fan_out_sources)
+            results["max_fan_in_destinations"] = str(max_fan_in_destinations)
+            results["sub_max_packets_links"] = str(sub_max_packets_links).replace("\n", "")
+            results["sub_max_source_packets_sources"] = str(sub_max_source_packets_sources).replace("\n", "")
+            results["sub_max_destination_packets_destinations"] \
+                = str(sub_max_destination_packets_destinations).replace("\n", "")
+            results["sub_max_fan_out_sources"] = str(sub_max_fan_out_sources).replace("\n", "")
+            results["sub_max_fan_in_destinations"] = str(sub_max_fan_in_destinations).replace("\n", "")
 
-            results["max_packets_links"] = max_packets_links
-            results["max_source_packets_sources"] = max_source_packets_sources
-            results["max_destination_packets_destinations"] = max_destination_packets_destinations
-            results["max_fan_out_sources"] = max_fan_out_sources
-            results["max_fan_in_destinations"] = max_fan_in_destinations
-            results["sub_max_packets_links"] = sub_max_packets_links
-            results["sub_max_source_packets_sources"] = sub_max_source_packets_sources
-            results["sub_max_destination_packets_destinations"] = sub_max_destination_packets_destinations
-            results["sub_max_fan_out_sources"] = sub_max_fan_out_sources
-            results["sub_max_fan_in_destinations"] = sub_max_fan_in_destinations
-
-        sub_max_packets[n_source_ranges, n_destination_ranges] \
-            = max_packets - np.sum(sub_max_packets[:n_source_ranges, :n_destination_ranges])
-        sub_max_source_packets[n_source_ranges, n_destination_ranges] \
-            = max_source_packets - np.sum(sub_max_source_packets[:n_source_ranges, :n_destination_ranges])
-        sub_max_destination_packets[n_source_ranges, n_destination_ranges] \
-            = max_destination_packets - np.sum(sub_max_destination_packets[:n_source_ranges, :n_destination_ranges])
-        sub_max_fan_out[n_source_ranges, n_destination_ranges] \
-            = max_fan_out - np.sum(sub_max_fan_out[:n_source_ranges, :n_destination_ranges])
-        sub_max_fan_in[n_source_ranges, n_destination_ranges] \
-            = max_fan_in - np.sum(sub_max_fan_in[:n_source_ranges, :n_destination_ranges])
-
-        results["max_packets"] = max_packets
-        results["max_source_packets"] = max_source_packets
-        results["max_destination_packets"] = max_destination_packets
-        results["max_fan_out"] = max_fan_out
-        results["max_fan_in"] = max_fan_in
-        results["sub_max_packets"] = sub_max_packets
-        results["sub_max_source_packets"] = sub_max_source_packets
-        results["sub_max_destination_packets"] = sub_max_destination_packets
-        results["sub_max_fan_out"] = sub_max_fan_out
-        results["sub_max_fan_in"] = sub_max_fan_in
+        results["max_packets"] = str(max_packets)
+        results["max_source_packets"] = str(max_source_packets)
+        results["max_destination_packets"] = str(max_destination_packets)
+        results["max_fan_out"] = str(max_fan_out)
+        results["max_fan_in"] = str(max_fan_in)
+        results["sub_max_packets"] = str(sub_max_packets).replace("\n", "")
+        results["sub_max_source_packets"] = str(sub_max_source_packets).replace("\n", "")
+        results["sub_max_destination_packets"] = str(sub_max_destination_packets).replace("\n", "")
+        results["sub_max_fan_out"] = str(sub_max_fan_out).replace("\n", "")
+        results["sub_max_fan_in"] = str(sub_max_fan_in).replace("\n", "")
 
         print(f"Maximum number of packets sent between a source and destination: {max_packets}")
         print(f"Maximum number of packets sent by a source: {max_source_packets}")
@@ -674,14 +714,14 @@ class TrafficMatrix:
         else:
             pass
 
-        results["n_links"] = self.n_links()
-        results["n_sources"] = self.n_sources()
-        results["n_destinations"] = self.n_destinations()
-        results["n_packets"] = self.n_packets()
-        results["sub_n_links"] = self.sub_n_links()
-        results["sub_n_sources"] = self.sub_n_sources()
-        results["sub_n_destinations"] = self.sub_n_destinations()
-        results["sub_n_packets"] = self.sub_n_packets()
+        results["n_links"] = str(self.n_links())
+        results["n_sources"] = str(self.n_sources())
+        results["n_destinations"] = str(self.n_destinations())
+        results["n_packets"] = str(self.n_packets())
+        results["sub_n_links"] = str(self.sub_n_links()).replace("\n", "")
+        results["sub_n_sources"] = str(self.sub_n_sources()).replace("\n", "")
+        results["sub_n_destinations"] = str(self.sub_n_destinations()).replace("\n", "")
+        results["sub_n_packets"] = str(self.sub_n_packets()).replace("\n", "")
         stop_time = time.time()
 
         if return_time:
