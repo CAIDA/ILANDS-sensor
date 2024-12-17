@@ -1,6 +1,5 @@
 .vscode/
 .cache/
 build/
-*.tar
 *.pcap
 *.grb
