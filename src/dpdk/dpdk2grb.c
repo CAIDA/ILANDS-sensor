@@ -1,3 +1,4 @@
+#include "rte_build_config.h"
 #define _GNU_SOURCE 1
 
 #include <fcntl.h>
@@ -19,8 +20,8 @@
 
 #include <GraphBLAS.h>
 
-#define RX_RING_SIZE    16384
-#define NUM_MBUFS       ((8192 - 1) * 16)
+#define RX_RING_SIZE    8192 // Can be retrieved with ethtool -g <ADAPTER>
+#define NUM_MBUFS       ((8192 - 1) * 32)
 #define MBUF_CACHE_SIZE 500
 #define BURST_SIZE      8192
 
@@ -90,6 +91,13 @@ struct graphblas_worker_args
     struct tm *t;
     size_t windowsize;
     size_t subwinsize;
+};
+
+struct lcore_worker_args
+{
+    uint16_t port_id;
+    uint16_t queue_id;
+    struct rte_mempool *mbuf_pool;
 };
 
 static const struct rte_eth_conf port_conf_default = {
@@ -252,7 +260,8 @@ static void graphblas_worker(void *arg)
 static inline int port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 {
     struct rte_eth_conf port_conf = port_conf_default;
-    const uint16_t rx_rings = rte_lcore_count() - 1, tx_rings = 0; // we'll save one lcore for the aggregation thread?
+    //const uint16_t rx_rings = rte_lcore_count() - 1, tx_rings = 0; // we'll save one lcore for the aggregation thread?
+    const uint16_t rx_rings = 4, tx_rings = 0; // we'll save one lcore for the aggregation thread?
     int retval;
 
     if (port >= rte_eth_dev_count_avail())
@@ -309,10 +318,11 @@ static __rte_noreturn void lcore_agg(void)
     }
 }
 
-static __rte_noreturn void lcore_main(void)
+static __rte_noreturn void lcore_main(void *arg)
 {
-    const uint16_t port = 0;
-    uint16_t q          = rte_lcore_id() - 1;
+    struct lcore_worker_args *args = (struct lcore_worker_args *) arg;
+    const uint16_t port = args->port_id;
+    uint16_t q          = args->queue_id;
     uint64_t packets    = 0;
     struct rte_ether_hdr *eth_hdr;
     struct rte_ipv4_hdr *ip_hdr;
@@ -321,16 +331,19 @@ static __rte_noreturn void lcore_main(void)
     uint32_t *pktbuf, *bufptr;
     uint32_t npkts = 0;
 
+    fprintf(stderr, "Spinning up lcore %u for RSS queue %u\n", rte_lcore_id(), q);
+
+    /*
     if ((q + 1) > rte_lcore_count())
     {
-        fprintf(stderr, "rte_lcore_count(): %u\n", rte_lcore_count());
+        fprintf(stderr, "lcore %u not starting: rte_lcore_count(): %u\n", q, rte_lcore_count());
         while (1)
         {
             sleep(1);
         }
     }
+    */
 
-    fprintf(stderr, "Spinning up lcore %u\n", q);
 
     if ((pktbuf = malloc(buffer_size)) == NULL) // WINDOWSIZE ip address pairs
         rte_exit(EXIT_FAILURE, "Cannot allocate packet buffer\n");
@@ -395,8 +408,9 @@ static __rte_noreturn void lcore_main(void)
 int main(int argc, char *argv[], char *envp[])
 {
     struct rte_mempool *mbuf_pool;
-    uint16_t portid;
+    uint16_t portid, lcoreid;
     int ret;
+    struct lcore_worker_args lcore_args[RTE_MAX_LCORE] = {0};
 
     ret = rte_eal_init(argc, argv);
 
@@ -408,7 +422,7 @@ int main(int argc, char *argv[], char *envp[])
     mbuf_pool =
         rte_pktmbuf_pool_create("MBUF_POOL", NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
 
-    fprintf(stderr, "MBUF pool created.\n");
+    fprintf(stderr, "MBUF pool created. (%.2f MB)\n", (mbuf_pool->size * mbuf_pool->elt_size) / (1024.0 * 1024.0) );
     if (mbuf_pool == NULL)
         rte_exit(EXIT_FAILURE, "Cannot create mbuf pool\n");
 
@@ -425,9 +439,17 @@ int main(int argc, char *argv[], char *envp[])
     if (ring == NULL)
         rte_exit(EXIT_FAILURE, "Cannot create ring.\n");
 
-    RTE_LCORE_FOREACH_WORKER(portid)
+    uint16_t queue_id = 0;
+    uint16_t num_cores = 4;
+    RTE_LCORE_FOREACH_WORKER(lcoreid)
     {
-        rte_eal_remote_launch((lcore_function_t *)lcore_main, NULL, portid);
+        if( queue_id >= num_cores )
+            break;
+
+        lcore_args[lcoreid].port_id = 0;
+        lcore_args[lcoreid].queue_id = queue_id;
+        rte_eal_remote_launch((lcore_function_t *)lcore_main, &lcore_args[queue_id], queue_id);
+        queue_id++;
     }
 
     fprintf(stderr, "Starting aggregation lcore.\n");

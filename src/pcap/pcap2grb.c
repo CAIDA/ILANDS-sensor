@@ -43,7 +43,9 @@ struct px3_state
     unsigned int anonymize;
     unsigned int swapped;
     unsigned int rec;
+    unsigned int create_new_file;
     int link_type;
+    long usec;
     uint32_t files_per_window;
     uint32_t subwinsize;
     uint64_t total_packets, total_invalid;
@@ -183,8 +185,9 @@ void set_output_filename(void)
     char timestr[128]   = { 0 };
     uint32_t windowsize = pstate->subwinsize * pstate->files_per_window;
 
+    pstate->create_new_file = 0;
     strftime(timestr, sizeof(timestr), "%Y%m%d-%H%M%S", pstate->f_tm);
-    snprintf(pstate->f_name, sizeof(pstate->f_name), "%s/%s.%u.tar", pstate->out_prefix, timestr, windowsize);
+    snprintf(pstate->f_name, sizeof(pstate->f_name), "%s/%s-%ld.%u.tar", pstate->out_prefix,  timestr, pstate->usec, windowsize);
 
     fprintf(stderr, "Setting output filename to %s.\n", pstate->f_name);
 
@@ -256,9 +259,7 @@ void add_blob_to_tar(void *blob_data, unsigned int blob_size)
     pstate->findex++;
 
     if (pstate->findex >= pstate->files_per_window && !(pstate->findex > 0 && pstate->files_per_window == 1))
-    {
-        set_output_filename();
-    }
+        pstate->create_new_file = 1;
 }
 
 int main(int argc, char *argv[])
@@ -500,6 +501,7 @@ int main(int argc, char *argv[])
                 if (pstate->f_tm == NULL)
                 {
                     pstate->f_tm = localtime(&hdr_p->ts.tv_sec);
+                    pstate->usec = hdr_p->ts.tv_usec;
                     if (pstate->f_name[0] == '\0')
                     {
                         set_output_filename();
@@ -508,7 +510,15 @@ int main(int argc, char *argv[])
                 else
                 {
                     pstate->f_tm = localtime(&hdr_p->ts.tv_sec);
+                    pstate->usec = hdr_p->ts.tv_usec;
                 }
+            }
+            
+            if( pstate->create_new_file == 1 )
+            {
+                pstate->f_tm = localtime(&hdr_p->ts.tv_sec);
+                pstate->usec = hdr_p->ts.tv_usec;
+                set_output_filename();
             }
 
             if (pstate->anonymize == 1) // CryptopANT
