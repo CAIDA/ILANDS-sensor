@@ -1,0 +1,36 @@
+{
+	"name":"4x4 Template",
+	"size":"4x4",
+	"author":"C.D. Milner",
+	
+	"axis_labels":[
+		"nonroute",
+		"bogon",
+		"assigned",
+		"other",
+		],
+	
+	"traffic_matrix":[
+		[1,0,0,2,],
+		[1,0,0,2,],
+		[1,0,0,2,],
+		[1,0,0,2,],
+	],
+	
+	"traffic_matrix_colors":[
+		[3,0,2,2,],
+		[0,0,2,2,],
+		[1,1,0,0,],
+		[1,1,0,3,],
+	],
+	
+	"has_question":true,
+	"question":"What is 2+2?",
+	
+	"answers":[
+		"4",
+		"2",
+		"I don't know.",
+		],
+	"correct_answer_element":0,
+}
