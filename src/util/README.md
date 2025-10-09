@@ -42,6 +42,12 @@ Or:
 Each provided input text file will appear as a diagonal GraphBLAS matrix in the output .tar file in the
 order provided on the command line.
 
+We have provided two files under the "IPlist" directory for convenience that can be used for this purpose.
+They were generated using this utility as follows:
+
+$ iplist2grb -n NonRoutableBogonIPList-LE rfc1918.txt bogons.txt
+$ iplist2grb -S -n NonRoutableBogonIPList-BE rfc1918.txt bogons.txt
+
 ## makecache
 makecache - Generates a precomputed IP address anonymization table.
 
